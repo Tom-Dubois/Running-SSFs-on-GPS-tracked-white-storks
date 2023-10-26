@@ -1,0 +1,1738 @@
+Necessary packages
+```{r}
+library(tidyverse)
+library(dismo)
+library(ggplot2)
+library(dplyr)
+library(amt)
+library(move)
+library(moveVis)
+library(terra)
+library(mapdata)
+
+setwd("C:/Users/Tom Dubois/OneDrive/Desktop/Year 1 UCL/Summer internship/White-Stork-Migrations")
+```
+Early data visualisation
+```{r}
+#Separating the data for the individual in the survey 
+num_individuals <-movement %>% 
+  group_by(tag.local.identifier,individual.local.identifier) %>% 
+  count() %>% 
+  arrange(desc(n))
+num_individuals
+#To begin visualising the movement, I will use the movement of only one individual (the one with the least points so it takes less long to process)
+movement_3020<-movement %>% 
+  filter(tag.local.identifier==3020)
+movement_3020
+#Keeping only longitude and latitude for now 
+movement_3020<-movement_3020 %>% 
+  dplyr::select(location.long,location.lat) %>% 
+  filter(!is.na(location.long), !is.na(location.lat))
+movement_3020
+
+#Creating a map with our longitude and lattitude data to visualise the movement
+library(maptools)
+data(wrld_simpl)
+plot(wrld_simpl,xlim=c(-40,30),ylim=c(30,50),axes=TRUE,col="light yellow")
+points(movement_3020$location.long,movement_3020$location.lat,col="blue",pch=20,cex=0.1)
+
+#Visualising movement of every tracked individual
+movement_all<-movement %>% 
+  dplyr::select(location.long,location.lat,tag.local.identifier) %>% 
+  filter(!is.na(location.long), !is.na(location.lat))
+plot(wrld_simpl,xlim=c(-50,75),ylim=c(-30,55),axes=TRUE,col="light yellow")
+points(movement_all$location.long,movement_all$location.lat,col=movement_all$tag.local.identifier,pch=20,cex=0.1)
+box()
+
+head(movement)
+#Checking if the tag.local.identifier is actually representative of the different birds in the study 
+n_birds<-movement %>% 
+  summarise(n_individuals=n_distinct(tag.local.identifier))
+n_birds
+
+world_map <- map_data("world")
+ggplot(world_map, aes(x = long, y = lat, group = group)) +
+  geom_polygon(fill="lightgray", colour = "white")+
+  coord_map(xlim=c(-25,25),ylim=c(35,50))+
+  geom_point(data=movement_3020,aes(x=location.long,y=location.lat),color="red",inherit.aes=FALSE,alpha=0.3,size=0.1)
+
+head(movement_all)
+
+#Visualising the movement of every individual on a different map 
+map_all<-ggplot(world_map, aes(x = long, y = lat, group = group)) +
+  geom_polygon(fill="lightgray", colour = "white")+
+  coord_map(xlim=c(-25,25),ylim=c(20,50))+
+  geom_point(data=movement_all,aes(x=location.long,y=location.lat),inherit.aes=FALSE) +
+  facet_wrap(facets=vars(tag.local.identifier))
+map_all
+ggsave("Movement of all individuals from study.png",map_all)
+
+#Thinning data to have longer intervals between every data entry (Creating each map is currently taking minutes)
+head(movement)
+str(movement)
+#Converting timestamp column to datetime class 
+help(as_datetime)
+movement$timestamp<-as_datetime(movement$timestamp,
+                  format="%Y-%m-%d %H:%M:%OS")
+#Filtering to have data per day instead of per second 
+movement_by_day<-movement %>% 
+  mutate(year=year(timestamp),month=month(timestamp),day=day(timestamp)) %>% 
+  filter(!is.na(location.long),!is.na(location.lat)) %>% 
+  distinct(year,month,day,tag.local.identifier,.keep_all=TRUE) %>% 
+  dplyr::select(timestamp,location.long,location.lat,tag.local.identifier)
+
+#Now mapping the thinned data 
+map_all_thinned<-ggplot(world_map, aes(x = long, y = lat, group = group)) +
+  geom_polygon(fill="lightgray", colour = "white")+
+  coord_map(xlim=c(-25,25),ylim=c(20,60))+
+  geom_point(data=movement_by_day,aes(x=location.long,y=location.lat,colour=timestamp),shape=".",inherit.aes=FALSE) +
+  facet_wrap(facets=vars(tag.local.identifier))
+map_all_thinned
+ggsave("Movement per day with all individuals from study.png",map_all_thinned)
+
+  
+```
+Plotting individual migrations for each individual (names of datasets need to be changed, but could be useful for data visualisation)
+```{r}
+#Visualising every migration separately for each individual 
+#Adding a migration counter for each individual 
+date<-movement_only_migrate %>% 
+  mutate(day=day(timestamp),month=month(timestamp))
+counter=1
+movement_only_migrate$counter[1]=counter
+for (i in 1:(nrow(movement_only_migrate)-1)){
+  diff_in_dates<-as.numeric(difftime(timestamp[i+1],timestamp[i],units="days"))
+  abs_diff<-abs(diff_in_dates)
+  if (abs_diff<30){
+    movement_only_migrate$counter[i+1]=counter
+  }
+  else {
+    if (tag.local.identifier[i+1]==tag.local.identifier[i]){
+      counter=counter+1
+      movement_only_migrate$counter[i+1]=counter
+    }
+    else {
+      counter=1
+      movement_only_migrate$counter[i+1]=counter
+    }
+  }
+}
+#Plotting each migration for every individual 
+for (i in 1:nrow(identifier)){
+  migration_individual<-movement_only_migrate %>% 
+  filter(tag.local.identifier==identifier[i,])
+  if(nrow(migration_individual>=1)){
+  map<-ggplot(world_map, aes(x = long, y = lat, group = group)) +
+    geom_polygon(fill="lightgray", colour = "white")+
+    coord_map(xlim=c(-25,25),ylim=c(20,60))+
+    geom_point(data=migration_individual,aes(x=location.long,y=location.lat,colour=timestamp),inherit.aes=FALSE) +
+    facet_wrap(facets=vars(counter))
+  name_of_map<-paste("Map of migrations of",identifier[i,],".png")
+  ggsave(name_of_map,map)
+  }
+}
+
+
+
+```
+Making an animation of the movement (I just did this for one invdividual for a year as it takes very long to run but I think it could be interesting for visualisation to create a general animation)
+```{r}
+
+#Converting timestamp column to POSIXct format 
+movement$timestamp<-as_datetime(movement$timestamp,
+                  format="%Y-%m-%d %H:%M:%OS")
+#Only using one individual and only for one year (using the entire dataset crashed my computer)
+#Reading the dates for migrations to give a time range for individual 2543
+migration_dates<-read.csv("migration dates.csv")
+movement_2543_1yr<-movement %>% 
+  filter(tag.local.identifier==2543) %>% 
+  filter(between(timestamp,as.POSIXct(migration_dates[3,2]),as.POSIXct(migration_dates[8,2])))
+#This interval is around 1 year 
+head(movement_2543_1yr)
+
+
+#Converting movement dataframe to a spatial object
+movement_2543_spatial<-df2move(
+  movement_2543_1yr,proj = "+proj=longlat +datum=WGS84", x = "location.long", 
+  y = "location.lat", time = "timestamp", track_id = "tag.local.identifier", 
+  removeDuplicatedTimestamps = TRUE)
+
+#Checking sampling rate 
+lag <- unlist(timeLag(movement_2543_spatial, unit = "mins"))
+median(lag)
+sd(lag)
+hist(lag)
+
+#Choosing a frame rate of 3 hours (arbitrary)
+movement_2543_spatial<-align_move(movement_2543_spatial,res=180,unit="mins")
+length(unique(timestamps(movement_2543_spatial)))
+
+#Defining a manual extent for which we want to animate 
+ext <- extent(movement_2543_spatial)*1.1
+ext@xmin <- ext@xmin*1.3
+ext@xmax <- ext@xmax*1.3
+
+
+#Creating frames 
+frames_2543<-frames_spatial(
+  movement_2543_spatial,ext=ext,
+  trace_show=T,trace_colour="lightcoral",
+  map_type = "terrain"
+)
+frames_2543[2000]
+
+#Customising frames 
+frames_2543<-frames_2543 %>% 
+  add_labels(title="White stork migration from 2014-2015 (individual 2543)") %>% 
+  add_timestamps(type="label") %>% 
+  add_progress(colour = "white")
+
+#Animating 
+animate_frames(frames_2543, width = 800, height = 800,
+               out_file = "2543 migration first year.mov", end_pause = 1)
+```
+Running step selection function (this was one of my first attempts, I'm leaving it in case some code might be useful but this is not necessary to run model)
+```{r}
+library(ctmm)
+library(amt)
+library(circular)
+library(dplyr)
+library(maptools)
+library(raster)
+library(ggmap)
+library(lubridate)
+load("C:/Users/Tom Dubois/OneDrive/Desktop/Year 1 UCL/Summer internship/White-Stork-Migrations/data/Move object of white stork migrations segmented by migratory state.RData") #Loading movement.move 
+head(movement.move)
+movement.move
+#Subsetting move object to keep only South Migration
+south_migration.move<-subset(movement.move,state=="South Migration")
+
+
+#Converting move object to amt::track object (keeping only South Migration)
+south_migration.tracks1<-as.data.frame(south_migration.move) %>% 
+  dplyr::select(id=trackId,x=x,y=y,ts=time,state=state) %>% 
+  make_track(x,y,ts,id,state,crs=projection(movement.move))
+south_migration.tracks<-amt::mk_track(as.data.frame(south_migration.move),
+                                      coords.x1,coords.x2,timestamps,
+                                      id=trackId,
+                                      crs=crs(south_migration.move))
+
+
+
+
+movement.tracks<-amt::mk_track(as.data.frame(movement.move),
+                                      coords.x1,coords.x2,timestamps,
+                                      id=trackId,
+                                      crs=crs(movement.move))
+
+movement.tracks<-track_resample(movement.tracks,rate=minutes(5),tolerance=seconds(30))
+movement.tracks<-filter_min_n_burst(movement.tracks,3)
+#Converting locations to steps 
+movement_list<-split(movement.tracks,movement.tracks$id)
+ssf_storks<-map(movement_list,steps_by_burst)
+ssf_storks<-bind_rows(ssf_storks, .id="id")
+#Viewing empirical distances and turning angles 
+par(mfrow = c(1, 1))
+hist(ssf_storks$sl_, breaks = 200, main = "", 
+  xlab = "Distance (m)",xlim=c(0.5,5),ylim=c(0,10))
+hist(ssf_storks$ta_,  main="",breaks = 300,
+      xlab="Relative angle (radians)")
+summary(ssf_storks$sl_)
+#Summary statistics 
+summary(south_migration.tracks)
+#Plotting 
+extent(movement.move)
+base_map<-get_map(location=c(left=-20,bottom=35,right=25,top=50))
+ggmap(base_map) +
+  geom_point(data=movement.tracks,aes(x=x_, y=y_,colour=factor(movement.tracks$id)))
+
+#Inspecting data 
+hist(step_lengths(south_migration.tracks),breaks=50)
+hist(summarize_sampling_rate(south_migration.tracks,summarize=FALSE,time_unit="sec"),breaks=1000000,xlim=c(0,1000)) #Looks like samples are taken in bursts around every five minutes 
+hist(summarize_sampling_rate(south_migration.tracks,summarize=FALSE,time_unit="sec"),breaks=1000000,ylim=c(0,10)) #There are a few very long sampling rates (will be some gaps in data)
+summarize_sampling_rate(south_migration.tracks)
+timeLags <- timeLag(south_migration.move, units='secs')
+timeLagsVec <- unlist(timeLags)
+summary(timeLagsVec)
+timelag<-unlist(timeLags[1])
+hist(timelag, breaks=1000000, main=NA, xlab="Time lag in seconds")
+pattern<-data.frame(time=timestamps(south_migration.move[south_migration.tracks$id=="Ingo...DER.AU640..eobs.2543.",]))
+ggplot(pattern,aes(x=hour(time))) +geom_histogram(binwidth=1) + xlim(0,24) #Tracking is between 2:00-20:00
+ggplot(timeLagsVec)
+
+
+#Thinning data (programs are taking extremely long to run and the near points will be very autocorrelated anyway)
+resampled_migration.tracks<-track_resample(south_migration.tracks,rate=minutes(5),tolerance=seconds(30))
+summarize_sampling_rate(resampled_migration.tracks)
+ggmap(base_map) +
+  geom_point(data=resampled_migration.tracks[resampled_migration.tracks$sl_>2000,],aes(x=x_, y=y_,colour=factor(resampled_migration.tracks$id)))
+#Removing bursts with less than 3 observations
+resampled_migration.tracks<-filter_min_n_burst(resampled_migration.tracks,3)
+
+summary(amt::speed(south_migration.tracks))
+par(mfrow=c(1,2))
+hist(amt::speed(projected_migrations),breaks=100000,xlim=c(0,20))
+hist(unlist(move::speed(south_migration.move)),breaks=100000,xlim=c(0,20))
+summary(unlist(move::speed(south_migration.move)))
+summary(amt::speed(projected_migrations))
+
+#Converting locations to steps 
+resampled_migration.tracks<-ungroup(resampled_migration.tracks)
+resampled_list<-split(resampled_migration.tracks,resampled_migration.tracks$id)
+ssf_storks<-map(resampled_list,steps_by_burst)
+ssf_storks<-bind_rows(ssf_storks, .id="id")
+projection(south_migration.move)
+#Viewing empirical distances and turning angles 
+par(mfrow = c(1, 1))
+hist(ssf_storks$sl_, breaks = 200, main = "", 
+  xlab = "Distance (m)",xlim=c(0.5,5),ylim=c(0,10))
+hist(ssf_storks$ta_,  main="",breaks = 300,
+      xlab="Relative angle (radians)")
+summary(ssf_storks$sl_)
+#Creating random steps 
+set.seed(2)
+ssf_storks<-random_steps(ssf_storks,n_control=100)
+
+#Converting projected locations to steps 
+projected_migrations<-ungroup(projected_migrations)
+reprojected_list<-split(projected_migrations,projected_migrations$id)
+ssf_projected_storks<-map(reprojected_list,steps_by_burst)
+ssf_projected_storks<-bind_rows(ssf_projected_storks, .id="id")
+
+#Creating projected steps but only for one individual 
+projected_migrations_2543<-projected_migrations[projected_migrations$id=="Ingo...DER.AU640..eobs.2543.",]
+projected_migrations_2543<-projected_migrations_2543 %>% 
+  filter(year(t_)==2014)
+ssf_2543<- steps_by_burst(projected_migrations_2543)
+hist(ssf_2543$ta_,  main="",breaks = 50,
+      xlab="Direction (radians)")
+summary(ssf_2543)
+par(mfrow = c(1, 2))
+hist(ssf_projected_storks$sl_, breaks = 100000, main = "", 
+  xlab = "Distance (m)",xlim=c(0,500))
+hist(ssf_projected_storks$ta_,  main="",breaks = 50,
+      xlab="Relative angle (radians)")
+summary(ssf_projected_storks$sl_)
+ssf_projected_storks[ssf_projected_storks$sl_==max(ssf_projected_storks$sl_),]
+ssf_projected_storks[ssf_projected_storks$burst_==65 & ssf_projected_storks$id=="Luca.....DER.AU596..eobs.3017.",]
+hist(as.numeric(ssf_projected_storks$dt_),breaks=10000)
+head(ssf_projected_storks)
+#Removing points with over 1000 secs 
+ssf_projected_strict_resample<-ssf_projected_storks[which(as.numeric(ssf_projected_storks$dt_)<700),]
+nrow(ssf_projected_strict_resample)
+summary(ssf_projected_strict_resample$sl_)
+ssf_projected_strict_resample[ssf_projected_strict_resample$sl_>1000,]
+ssf_projected_strict_resample[ssf_projected_strict_resample$sl_==max(ssf_projected_strict_resample$sl_),]
+head(ssf_projected_storks)
+
+
+
+
+turnAngles <- turnAngleGc(movement.move) ## Angles in degrees relative to the previous step
+hist(unlist(turnAngles), breaks=18, xlab="Turning Angle", main=NA)
+
+
+direction <- angle(south_migration.move) ## Angles in degrees relative to the N
+summary(unlist(direction))
+hist(unlist(direction),  breaks=18, xlab="Direction of movement", main=NA)
+
+migrate_2543.move<-south_migration.move[[2]]
+azimuth <- data.frame(D=angle(migrate_2543.move),
+                      V=speed(migrate_2543.move))
+azimuth$Dcirc<-as.circular(azimuth$D, 
+                 rotation="clock", 
+                 units="degrees", 
+                 type="angles", 
+                 modulo="asis", 
+                 zero=0, 
+                 template="geographic")
+
+plot(azimuth$Dcirc, stack=T, shrink=1.6, pch=16, sep=0.05, col="grey")
+south_migration.move@idData
+
+
+
+
+
+#Segmenting tracks for individual 2543 
+migration.df<-as.data.frame(movement.move)
+migration_2543<-migration.df %>% 
+  filter(trackId=="Ingo...DER.AU640..eobs.2543.") %>% 
+  filter(between(time, as.Date('2014-10-01'), as.Date('2014-12-30'))) %>% 
+  filter(between(hour(time),9,19))
+
+migration_2543<-migration.df %>% 
+  filter(trackId=="Ingo...DER.AU640..eobs.2543.") %>% 
+  filter(between(time, as.Date('2014-08-21'), as.Date('2014-09-01'))) %>% 
+  filter(between(hour(time),9,19))
+
+migration_2543.tracks<-amt::mk_track(migration_2543,
+                                      x,y,time,crs="+proj=longlat +ellps=WGS84 +no_defs")
+migration_2543.tracks<-track_resample(migration_2543.tracks,rate=minutes(5),tolerance=seconds(30))
+migration_2543.tracks<-filter_min_n_burst(migration_2543.tracks,3)
+
+ssf_2543<-migration_2543.tracks %>% steps_by_burst()
+hist(ssf_2543$ta_,  main="",breaks = 50,
+      xlab="Relative angle (radians)")
+
+
+
+library(ctmm)
+migration_2543.telemetry <- as_telemetry(migration_2543.tracks)
+plot(variogram(migration_2543.telemetry), xlim = c(0, 10 * 3600))
+
+GUESS <- ctmm.guess(migration_2543.telemetry, interactive=FALSE)
+FIT <- ctmm.fit(migration_2543.telemetry, GUESS)
+
+plot(variogram(migration_2543.telemetry), xlim = c(0, 10 * 3600))
+abline(v = FIT$tau["velocity"]  * -log(0.01) / 3600, col = "blue")
+abline(v = FIT$tau["velocity"]  * -log(0.02) / 3600, col = "red")
+legend("bottomright", lty = 1, col = c("blue", "red"), legend = c("1%", "2%"), title = "Velocity\nautocorrelation", 
+       bty = "n")
+
+```
+Testing different ways to resample data (ended up taking hourly fixes during the day)
+```{r}
+library(lubridate)
+#Loading data 
+setwd("C:/Users/Tom Dubois/OneDrive/Desktop/Year 1 UCL/Summer internship/White-Stork-Migrations")
+movement.df<-read.csv("LifeTrack White Stork Oberschwaben_2014-2019-gps.csv",as.is=T)
+
+#Converting date/time to POSIXct format 
+movement.df$timestamp<-as.POSIXct(movement.df$timestamp,format="%Y-%m-%d %H:%M:%OS",tz="UTC")
+
+#Ensuring that timestamps and individuals are ordered
+movement.df<-movement.df[order(movement.df$tag.local.identifier,movement.df$timestamp),]
+
+
+#Thinning data to one point per day (at 2 am) and removing missing values 
+daily_movement<-movement.df %>% 
+  filter(!is.na(location.long),!is.na(location.lat)) %>% 
+  filter(hour(timestamp)==2 | hour(timestamp)==3 | hour(timestamp)==4 | hour(timestamp)==5) %>% 
+  distinct(year(timestamp),month(timestamp),day(timestamp),individual.local.identifier,.keep_all=TRUE)
+
+write.csv(daily_movement,file="C:/Users/Tom Dubois/OneDrive/Desktop/Year 1 UCL/Summer internship/White-Stork-migrations/data/White Stork movement per day (fixes at 2 am).csv")
+
+#Plotting data 
+world_map <- map_data("world")
+plotted<-ggplot(world_map, aes(x = long, y = lat, group = group)) +
+  geom_polygon(fill="lightgray", colour = "white")+
+  coord_map(xlim=c(-25,25),ylim=c(20,60))+
+  geom_point(data=daily_movement,aes(x=location.long,y=location.lat,colour=timestamp),shape=".",inherit.aes=FALSE) +
+  facet_wrap(facets=vars(individual.local.identifier))
+plotted
+
+#Creating track_xyt object to analyse sampling rate (seems there are holes in data)
+daily.tracks<-amt::mk_track(daily_movement,
+                                      location.long,location.lat,timestamp,
+                                      id=individual.local.identifier,
+                                      crs="+proj=longlat +datum=WGS84 +no_defs")
+summarize_sampling_rate_many(daily.tracks,"id",time_unit="day")
+
+ggplot(daily_movement,aes(x=timestamp)) +geom_histogram()
+ggplot(movement.df,aes(x=timestamp)) +geom_histogram()
+
+#################################################################
+###Using time of day to get the mean position during the night###
+#################################################################
+library(maptools)
+library(suncalc)
+#Removing NA values 
+movement.df<-movement.df %>% 
+  filter(!is.na(location.long),!is.na(location.lat))
+#Creating track_xyt object of whole dataset
+movement.tracks<-amt::mk_track(movement.df,
+                                      location.long,location.lat,timestamp,
+                                      id=individual.local.identifier,
+                                      crs="+proj=longlat +datum=WGS84 +no_defs")
+
+#Adding column to dataframe which indicates if the datapoint is during day or night 
+movement.day<-time_of_day(movement.tracks,include.crepuscule=FALSE)
+
+#Keeping fixes from the night
+movement.night<-movement.day %>% 
+  filter(tod_=="night") %>% 
+  filter(hour(t_)<10) #We only want fixes from 2am to morning 
+
+movement.night$t_<-as.Date(movement.night$t_) #Just keeping date as data will be daily from now on
+
+#Taking a daily average of the locations of each bird during the night 
+mean.night<-movement.night %>% 
+  group_by(id,t_) %>% 
+  summarise(x_=mean(x_),y_=mean(y_)) 
+  
+
+
+movement.night<-movement.day %>%   
+  filter(tod_=="night")
+
+movement.night<-track_resample(movement.night,hours(24),tolerance=hours(12))
+
+
+#Segmenting using NSD 
+
+xdist={}
+ydist={}
+nsd={}
+change={}
+attach(mean.night)
+individual<-id[1]
+j=1
+for (i in 1:(nrow(mean.night))) {
+  if (individual==id[i]){
+    xdist[i]<-abs(x_[i]-x_[j])
+    ydist[i]<-abs(y_[i]-y_[j])
+    nsd[i]<-sqrt(xdist[i]^2+ydist[i]^2)
+    change[i]=0
+  }
+  else {
+    j=i
+    individual=id[i]
+    xdist[i]<-abs(x_[i]-x_[j])
+    ydist[i]<-abs(y_[i]-y_[j])
+    nsd[i]<-sqrt(xdist[i]^2+ydist[i]^2)
+  }
+}
+detach(mean.night)
+mean.night$NSD<-nsd
+
+
+
+
+
+start_date<-as.Date("2014-06-18")
+end_date<-as.Date("2019-03-31")
+
+
+individuals<-unique(mean.night$id)
+migratory_changes<-data.frame(date=c(),individual=c())
+for (i in 1:length(individuals)){
+  movement_individual<-mean.night %>% 
+    filter(id==individuals[i])
+  plot(movement_individual$t_,movement_individual$NSD,main=individuals[i],xlim=c(movement_individual$t_[1],movement_individual$t_[nrow(movement_individual)]),ylim=c(0,25))
+  clicks<-locator()
+  dates<-c(movement_individual$t_[1],as.Date(clicks$x,origin="1970-01-01"),movement_individual$t_[nrow(movement_individual)])
+  individual<-rep(individuals[i],length(dates))
+  migrations<-data.frame(date=dates)
+  migrations<-cbind(migrations,individual)
+  migratory_changes<-rbind(migratory_changes,migrations)
+}
+
+write.csv(mean.night,file="C:/Users/Tom Dubois/OneDrive/Desktop/Year 1 UCL/Summer internship/White-Stork-migrations/data/White Stork movement average position during night.csv")
+
+mean.night<-read.csv("C:/Users/Tom Dubois/OneDrive/Desktop/Year 1 UCL/Summer internship/White-Stork-migrations/data/White Stork movement average position during night.csv")
+mean.night<-mean.night[,-1]
+
+#Assigning categories to different states 
+mean.night$state<-1
+for (i in 1:length(individuals)) {
+  migratory_changes_individual<-migratory_changes %>% 
+    filter(individual==individuals[i])
+  state<-1
+  for (j in 1:(nrow(migratory_changes_individual)-1)){
+     mean.night$state[mean.night$id==individuals[i] & mean.night$t_>=migratory_changes_individual[j,1] &  mean.night$t_<=migratory_changes_individual[j+1,1]]<-state
+    if (state==4){
+      state<-1
+    } else {
+      state<-state+1
+    }
+  }
+}
+
+#Creating factor of state column 
+categories<- c("1"="Breeding", "2"="South Migration", 
+               "3"="Wintering", "4"="North Migration")
+mean.night$state<-factor(categories[mean.night$state],levels=c("Breeding","South Migration", "Wintering", "North Migration"))
+
+#Plotting NSD with legend for migratory state to check that data has been segmented correctly 
+for (i in 1:length(individuals)){
+  mean.individual <-mean.night %>% 
+    filter(id==individuals[i])
+  plot(mean.individual$t_,mean.individual$NSD,main=individuals[i],xlim=c(as.Date(start_date),as.Date(end_date)),ylim=c(0,25),col=mean.individual$state,xlab="time",ylab="Net Squared Displacement")
+  legend("topright",legend=unique(mean.night$state),col=unique(legend=mean.night$state),fill=unique(mean.night$state),horiz=T,cex=0.5)
+}
+
+
+#Keeping only south migrations 
+migrations<-mean.night %>% 
+  filter(state=="South Migration")
+
+migrations<-amt::mk_track(migrations,
+                                      x_,y_,t_,
+                                       id=id,
+                                      crs="+proj=longlat +datum=WGS84 +no_defs")
+
+migrations$t_<-as.POSIXct(migrations$t_,tz="UTC",origin="1970-01-1",format="%Y-%m-%d %H:%M:%OS")
+#Bursting by day 
+migrations <- track_resample(migrations, hours(24),tolerance=hours(12)) 
+migrations <- filter_min_n_burst(migrations, 3)
+
+#Converting locations to steps 
+migrations<-ungroup(migrations)
+list<-split(migrations,migrations$id)
+ssf_storks<-map(list,steps_by_burst)
+ssf_storks<-bind_rows(ssf_storks, .id="id")
+
+#Viewing empirical distances and turning angles 
+par(mfrow = c(1, 1))
+hist(ssf_storks$sl_, breaks = 200, main = "", 
+  xlab = "Distance (m)",xlim=c(0.5,5),ylim=c(0,10))
+hist(ssf_storks$ta_,  main="",breaks = 300,
+      xlab="Relative angle (radians)")
+summary(ssf_storks$sl_)
+
+#################################################################
+######Segmenting with one fix per day using track_resample ######
+#################################################################
+
+daily.tracks<-track_resample(movement.tracks,rate=hours(24),tolerance=hours(2))
+
+#Adding NSD column 
+
+NSD <- sapply(unique(daily.tracks$id), function(id)
+    spDistsN1(as.matrix(subset(daily.tracks, daily.tracks$id == id , select = c("x_", "y_"))),
+              as.matrix(subset(daily.tracks, daily.tracks$id == id, select = c("x_", "y_"))[1,]), longlat=T)^2)
+daily.tracks$NSD<-unlist(NSD)
+
+
+ind<-movement.tracks %>% 
+  filter(id=="Ingo / DER AU640 (eobs 2543)") %>% 
+  filter(!is.na(x_)& !is.na(y_)) %>% 
+  filter(year(t_)=="2014" | year(t_)=="2015") %>% 
+  select(c("x_","y_"))
+
+ind<-movement.tracks %>% 
+  filter(id=="Ingo / DER AU640 (eobs 2543)") %>% 
+  filter(year(t_)=="2014" | year(t_)=="2015") %>% 
+  filter(!is.na(x_)& !is.na(y_)) 
+
+ind<-track_resample(ind,rate=hours(24),tolerance=hours(2))
+
+ind.mat<-ind %>% 
+  select(c("x_","y_"))
+
+
+NSD<-spDistsN1(as.matrix(ind.mat),
+              as.matrix(ind.mat)[1,], longlat=T)^2
+plot(ind$t_,NSD)
+clicks<-locator(3)
+dates<-c(ind$t_[1],as.POSIXct(clicks$x,tz='UTC',origin='1970-01-01'),ind$t_[nrow(ind)])
+```
+Creating raster stacks (You can just load the Environment stack I have created)
+```{r}
+library(terra)
+library(tiff)
+setwd("D:/")
+#Loading fcover 
+fcover <- terra::rast("Fcover/c_gls_FCOVER-RT6_201709200000_GLOBE_PROBAV_V2.0.1.nc")
+fcover<-subset(fcover,1)
+plot(fcover)
+points(migrations$x_,migrations$y_)
+
+#Loading NDVI 
+setwd("D:/")
+NDVI_0801 <- terra::rast("NDVI/c_gls_NDVI-LTS_1999-2019-0801_GLOBE_VGT-PROBAV_V3.0.1.nc")
+NDVI_0801<-NDVI_0801[[4]]
+NDVI_0811 <- terra::rast("NDVI/c_gls_NDVI-LTS_1999-2019-0811_GLOBE_VGT-PROBAV_V3.0.1.nc")
+NDVI_0811<-NDVI_0811[[4]]
+NDVI_0821 <- terra::rast("NDVI/c_gls_NDVI-LTS_1999-2019-0821_GLOBE_VGT-PROBAV_V3.0.1.nc")
+NDVI_0821<-NDVI_0821[[4]]
+NDVI_0901 <- terra::rast("NDVI/c_gls_NDVI-LTS_1999-2019-0901_GLOBE_VGT-PROBAV_V3.0.1.nc")
+NDVI_0901<-NDVI_0901[[4]]
+NDVI_0911 <- terra::rast("NDVI/c_gls_NDVI-LTS_1999-2019-0911_GLOBE_VGT-PROBAV_V3.0.1.nc")
+NDVI_0911<-NDVI_0911[[4]]
+NDVI_0921 <- terra::rast("NDVI/c_gls_NDVI-LTS_1999-2019-0921_GLOBE_VGT-PROBAV_V3.0.1.nc")
+NDVI_0921<-NDVI_0921[[4]]
+
+#Taking the mean of the NDVI layers 
+NDVI_mean<-terra::mean(NDVI_0801,NDVI_0811,NDVI_0901,NDVI_0911,NDVI_0921)
+plot(NDVI_mean)
+#Saving the raster for later use 
+setwd("D:/NDVI/")
+terra::writeRaster(NDVI_mean,filename="Mean NDVI.tif",filetype="GTiff")
+
+
+#Loading land cover forest coverage 
+Forest.list<-list.files("D:/Landcover/Forest/Map",pattern="*.tif",full.names=TRUE) #Creating list of file names to then load all files from folder in a loop
+Forest<-list() #List where we will put all files 
+for (file in Forest.list) {
+  data<-terra::rast(file)
+  Forest<-c(Forest, data)
+} #Creating list of different tiles 
+Forest<-terra::sprc(Forest) #Converting to SpatRasterCollection
+Forest<-merge(Forest) #Merging the tiles to get the whole map 
+#Changing resolution to 1 km 
+Forest<-terra::aggregate(Forest, fact=10, fun="mean", na.rm=T)
+#Saving raster 
+setwd("D:/Landcover/Forest/")
+terra::writeRaster(Forest,filename="Forest coverage 1km resolution.tif",filetype="GTiff",overwrite=TRUE)
+
+#Making an ocean layer using the Forest layer 
+classification<-c(NA,NA,1, 0,100,0)
+matrix_class <- matrix(classification, ncol=3, byrow=TRUE)
+ocean<-terra::classify(Forest, matrix_class)
+plot(ocean)
+#Saving the layer
+setwd("D:/Landcover/Ocean/")
+terra::writeRaster(ocean,filename="Ocean 1 km resolution.tif",filetype="GTiff",overwrite=TRUE)
+
+#Loading land cover Built-up coverage 
+setwd("D:/Landcover/Built-up")
+Builtup.list<-list.files("D:/Landcover/Built-up/Tiles",pattern="*.tif",full.names=TRUE) #Creating list of file names to then load all files from folder in a loop
+Builtup<-list() #List where we will put all files 
+for (file in Builtup.list) {
+  data<-terra::rast(file)
+  Builtup<-c(Builtup, data)
+} #Creating list of different tiles 
+Builtup<-terra::sprc(Builtup) #Converting to SpatRasterCollection
+Builtup<-merge(Builtup) #Merging the tiles to get the whole map 
+Builtup<-terra::aggregate(Builtup, fact=10, fun="mean", na.rm=T)
+plot(Builtup)
+terra::writeRaster(Builtup,filename="Built-up coverage 1km resolution.tif",filetype="GTiff",overwrite=TRUE)
+
+#Loading Digital Elevation Model 
+Elev.list<-list.files("D:/Elevation/Files",pattern="*.gz",full.names=TRUE) #Creating list of file names to then load all files from folder in a loop
+Elevation<-list() #List where we will put all files 
+for (file in Elev.list) {
+  data<-terra::rast(file)
+  Elevation<-c(Elevation, data)
+} #Creating list of different tiles 
+Elevation<-terra::sprc(Elevation) #Converting to SpatRasterCollection
+Elevation<-merge(Elevation) #Merging the tiles to get the whole map 
+
+#Saving raster
+setwd("D:/Elevation/Land")
+terra::writeRaster(Elev,filename="Elevation on land 1km resolution.tif",filetype="GTiff",overwrite=TRUE)
+
+#Loading rasters
+setwd("D:/")
+NDVI<-terra::rast("NDVI/Mean NDVI.tif")
+Elevation<-terra::rast("Elevation/Land/Elevation on land 1km resolution.tif")
+Fcover<-terra::rast("Fcover/c_gls_FCOVER-RT6_201709200000_GLOBE_PROBAV_V2.0.1.nc") #Ended up not using Fcover in final model 
+Fcover<-subset(Fcover,1)
+forest<-terra::rast("Landcover/Forest/Forest coverage 1km resolution.tif")
+builtup<-terra::rast("Landcover/Built-up/Built-up coverage 1km resolution.tif")
+ocean<-terra::rast("Landcover/Ocean/Ocean 1 km resolution.tif")
+
+#Cropping to same extent 
+NDVI_cropped<-terra::resample(NDVI,Elevation)
+Fcover_cropped<-terra::resample(Fcover,Elevation)
+Forest_cropped<-terra::resample(forest,Elevation)
+Builtup_cropped<-terra::resample(builtup,Elevation)
+Ocean_cropped<-terra::resample(ocean,Elevation)
+
+#Creating raster stack 
+names(NDVI_cropped)<-"NDVI"
+names(Elevation)<-"Elevation"
+names(Fcover_cropped)<-"Fcover"
+names(Forest_cropped)<-"Forest"
+names(Builtup_cropped)<-"Builtup"
+names(Ocean_cropped)<-"Oceanseas"
+Environment<-c(NDVI_cropped,Elevation,Fcover_cropped,Forest_cropped,Builtup_cropped,Ocean_cropped)
+terra::writeRaster(Environment,"Environmental variables.tif",overwrite=TRUE)
+#Making sure everything lines up
+plot(subset(Environment,1))
+plot(subset(Environment,2),add=TRUE)
+plot(subset(Environment,3),add=TRUE)
+plot(subset(Environment,4),add=TRUE)
+plot(subset(Environment,5),add=TRUE)
+plot(subset(Environment,6),add=TRUE)
+
+```
+Changing the function for states to exclude long stopovers 
+```{r}
+library(knitr)
+library(lubridate)
+library(maptools)
+library(raster)
+library(move)
+library(amt) 
+library(tibble)
+library(leaflet)
+library(dplyr)
+library(readr)
+library(ggplot2)
+library(glmmTMB)
+library(sf)
+library(here)
+#Loading data and setting it up
+setwd("C:/Users/Tom Dubois/OneDrive/Desktop/Year 1 UCL/Summer internship/White-Stork-Migrations")
+movement.df<-read.csv("LifeTrack White Stork Oberschwaben_2014-2019-gps.csv",as.is=T)
+movement.df$timestamp<-as.POSIXct(movement.df$timestamp,format="%Y-%m-%d %H:%M:%OS",tz="UTC")
+movement.df<-movement.df %>% 
+  filter(!is.na(location.long),!is.na(location.lat))
+
+
+#Creating track
+movement.tracks<-amt::mk_track(movement.df,           location.long,location.lat,timestamp,                   id=individual.local.identifier,crs="+proj=longlat +datum=WGS84 +no_defs")
+
+#Nesting data by ID
+movement.tracks <- movement.tracks |> nest(data = -"id")
+
+#Creating a new resampled column 
+movement.tracks<-mutate(movement.tracks,resampled=map(movement.tracks$data,function(x) track_resample(x,rate=hours(1),tolerance=minutes(15))))
+
+#Getting time of day 
+movement.tracks$resampled<-map(movement.tracks$resampled,function(x) time_of_day(x,include.crepuscule=FALSE))
+
+                                      
+#Adding column to dataframe which indicates if the datapoint is during day or night 
+movement.day<-time_of_day(movement.tracks,include.crepuscule=FALSE)
+#Keeping fixes from the day
+movement.day<-movement.day %>% 
+  filter(tod_=="day")
+  
+#Segmenting using daily points 
+daily<-amt::mk_track(movement.df, 
+                      location.long,
+                      location.lat, 
+                      timestamp, 
+                      id=individual.local.identifier)
+#Nesting by id
+daily<-nest(daily, data = -"id")
+#Resampling for daily points 
+daily$data<-map(daily$data, function(x) track_resample(x,rate=hours(24),tolerance=hours(12)))
+#Unnesting 
+daily<-unnest(daily,data)
+
+xdist={}
+ydist={}
+nsd={}
+change={}
+attach(daily)
+individual<-id[1]
+j=1
+for (i in 1:(nrow(daily))) {
+  if (individual==id[i]){
+    xdist[i]<-abs(x_[i]-x_[j])
+    ydist[i]<-abs(y_[i]-y_[j])
+    nsd[i]<-sqrt(xdist[i]^2+ydist[i]^2)
+    change[i]=0
+  }
+  else {
+    j=i
+    individual=id[i]
+    xdist[i]<-abs(x_[i]-x_[j])
+    ydist[i]<-abs(y_[i]-y_[j])
+    nsd[i]<-sqrt(xdist[i]^2+ydist[i]^2)
+  }
+}
+detach(daily)
+daily$NSD<-nsd
+
+
+individuals<-unique(daily$id)
+migratory_changes<-data.frame(date=c(),individual=c())
+for (i in 1:length(individuals)){
+  movement_individual<-daily %>% 
+    filter(id==individuals[i])
+  plot(movement_individual$t_,movement_individual$NSD,main=individuals[i],xlim=c(movement_individual$t_[1],movement_individual$t_[nrow(movement_individual)]),ylim=c(0,25))
+  clicks<-locator()
+  dates<-as.POSIXct(clicks$x,origin="1970-01-01",tz="UTC")
+  individual<-rep(individuals[i],length(dates))
+  migrations<-data.frame(date=dates)
+  migrations<-cbind(migrations,individual)
+  migratory_changes<-rbind(migratory_changes,migrations)
+}
+
+daily$state<-1
+for (i in 1:length(individuals)) {
+  migratory_changes_individual<-migratory_changes %>% 
+    filter(individual==individuals[i])
+  state<-1
+  for (j in 1:(nrow(migratory_changes_individual)-1)){
+    if (j %% 2 == 1) {
+      daily$state[daily$id==individuals[i] & daily$t_>=migratory_changes_individual[j,1] &  daily$t_<=migratory_changes_individual[j+1,1]]<-2
+     j<-j+1
+    }
+  }
+}
+
+categories<- c("1"="Other", "2"="South Migration")
+daily$state<-factor(categories[daily$state],levels=c("Other","South Migration"))
+
+
+for (i in 1:length(individuals)){
+  daily.individual <-daily %>% 
+    filter(id==individuals[i])
+  plot(daily.individual$t_,daily.individual$NSD,main=individuals[i],xlim=c(daily.individual$t_[1],daily.individual$t_[nrow(daily.individual)]),ylim=c(0,25),col=daily.individual$state,xlab="time",ylab="Net Squared Displacement")
+  legend("topright",legend=unique(daily$state),col=unique(legend=daily$state),fill=unique(daily$state),horiz=T,cex=0.5)
+}
+
+
+
+
+```
+Coding SSF for one individual (2543) (Not needed for model but some code might be useful)
+```{r}
+daily_2543<-daily %>% 
+  filter(id=="Ingo / DER AU640 (eobs 2543)")
+
+
+plot(daily_2543$t_,daily_2543$NSD,xlim=c(daily_2543$t_[1],daily_2543$t_[nrow(daily_2543)]),ylim=c(0,25),type="l")
+clicks<-locator()
+dates<-as.POSIXct(clicks$x,origin="1970-01-01",tz="UTC")
+write.csv(dates,file="2543 dates.csv")
+dates<-read.csv("2543 dates.csv")
+dates<-dates[,-1]
+
+daily_2543$state<-1
+for (j in 1:(length(dates)-1)){
+  if (j %% 2 == 1) {
+    daily_2543$state[daily_2543$t_>=dates[j] &  daily_2543$t_<=dates[j+1]]<-2
+   j<-j+1
+  }
+}
+
+categories<- c("1"="Other", "2"="South Migration")
+daily_2543$state<-factor(categories[daily_2543$state],levels=c("Other","South Migration"))
+plot(daily_2543$t_,daily_2543$NSD,xlim=c(daily_2543$t_[1],daily_2543$t_[nrow(daily_2543)]),ylim=c(0,25),col=daily_2543$state,xlab="time",ylab="Net Squared Displacement")
+legend("topright",legend=unique(daily_2543$state),col=unique(legend=daily_2543$state),fill=unique(daily_2543$state),horiz=T,cex=0.5)
+
+#Segmenting with data not thinned 
+movement_2543<-movement.df %>% 
+  filter(individual.local.identifier=="Ingo / DER AU640 (eobs 2543)")
+
+movement_2543$state<-1
+for (j in 1:(length(dates)-1)){
+  if (j %% 2 == 1) {
+    movement_2543$state[movement_2543$timestamp>=dates[j] &  movement_2543$timestamp<=dates[j+1]]<-2
+   j<-j+1
+  }
+}
+
+categories<- c("1"="Other", "2"="South Migration")
+movement_2543$state<-factor(categories[movement_2543$state],levels=c("Other","South Migration"))
+plot(movement_2543$timestamp,movement_2543$NSD,xlim=c(movement_2543$timestamp[1],movement_2543$timestamp[nrow(movement_2543)]),ylim=c(0,25),col=movement_2543$state,xlab="time",ylab="Net Squared Displacement")
+legend("topright",legend=unique(movement_2543$state),col=unique(legend=movement_2543$state),fill=unique(movement_2543$state),horiz=T,cex=0.5)
+
+#Keeping only South Migration 
+migration_2543<-movement_2543 %>% 
+  filter(state=="South Migration")
+
+#Creating track object 
+track.2543<-amt::mk_track(migration_2543,location.long,location.lat,timestamp,              crs=4326)
+
+#Keeping only points during the day and resampling to hourly points 
+track.2543<-time_of_day(track.2543,include.crepuscule=FALSE)
+track.2543<-track.2543 %>% 
+  filter(tod_=="day")
+track.2543<-amt::track_resample(track.2543,rate=hours(1),tolerance=minutes(15))
+
+#Creating step object 
+library(sf)
+track.2543 <- filter_min_n_burst(track.2543, 3)
+ssf_2543 <- steps_by_burst(track.2543)
+
+#Observing turning angle and step length 
+par(mfrow = c(1, 2))
+hist(ssf_2543$sl_, breaks = 20, main = "", 
+  xlab = "Distance (m)")
+hist(ssf_2543$ta_,  main="",breaks = seq(-pi, pi, len=30),
+      xlab="Relative angle (radians)")
+
+#Creating random points 
+set.seed(2)
+
+#Random steps are sampled with the updated step length distribution 
+ssf_2543<-random_steps(ssf_2543,n=15)
+ssf_2543<-ssf_2543 %>% 
+  mutate(log_sl_=log(sl_))
+#Extracting covariates 
+
+Environment<-terra::rast("Environmental variables.tif")
+ssf_2543<-extract_covariates(ssf_2543,Environment,where="both")
+
+
+#Fitting distributions to step length and turning angle
+#Step length
+library("MASS")
+fexp <- fitdistr(ssf_2543$sl_, "exponential")
+fgamma <- amt::fit_distr(ssf_2543$sl_, "gamma")
+par(mfrow = c(1, 1))
+hist(ssf_2543$sl_, breaks = 50, prob = TRUE,
+     xlab = "Step length (m)", main = "")
+plot(function(x) dexp(x, rate = fexp$estimate), add = TRUE, from = 0.0002, to = 2, col = "red")
+plot(function(x) dgamma(x, shape = fgamma$params$shape,
+                        scale = fgamma$params$scale), add = TRUE, from = 0.0002, to = 2, col = "blue")
+plot(function(x) dgamma(
+  x,
+  shape = updated_sl$params$shape,
+  scale = updated_sl$params$scale), add = TRUE, from = 0.0002, to = 2, col = "orange")
+
+legend("topright", col = c("red", "blue","orange"), lty = 1,
+       legend = c("exponential", "gamma","gamma with habitat selection"), bty = "n")
+
+#Turning angle
+library(circular)
+fvmises <- amt::fit_distr(ssf_2543$ta_, "vonmises")
+par(mfrow = c(1, 1))
+hist(ssf_2543$ta_, breaks = 50, prob = TRUE, 
+     xlim = c(-pi, pi),
+     xlab = "Turning angles (rad)", main = "")
+plot(function(x) dvonmises(x, mu = 0, kappa = fvmises$params$kappa), add = TRUE, from = -pi, to = pi, col = "red")
+
+
+#Fitting a first model 
+m_1 <- fit_issf(ssf_2543, case_ ~ ta_ + cos(ta_) + sl_ + log_sl_ + NDVI_end + Elevation_end + Fcover_end + Forest_end + Oceanseas_end + Builtup_end + strata(step_id_),model=TRUE)
+summary(m_1)
+
+#######################################
+######Exploring options for iSSF#######
+#######################################
+
+#I did not have the time to fully explore integrated Step Selection Functions (they are useful to study the effect of environmental conditions on the characteristic of the movement. For e.g., would a white stork have longer steps if it is in a certain environment)
+#For the purposes of this model I do not think that an iSSF is particularly more useful than a typical SSF 
+
+#Updating step length distribution (step length and log step length were significant)
+updated_sl<-update_sl_distr(m_1)
+
+#Plotting new step length distribution 
+
+# data.frame for plotting
+plot_sl <- data.frame(x = rep(NA, 100))
+
+# x-axis is sequence of possible step lengths
+plot_sl$x <- seq(from = 0, to = 3, length.out = 100)
+
+# y-axis is the probability density under the given gamma distribution
+# For the tentative distribution
+plot_sl$tentative <- dgamma(
+  x = plot_sl$x, 
+  shape = m_1$sl_$params$shape,
+  scale = m_1$sl_$params$scale)
+
+# For the updated distribution
+plot_sl$updated <- dgamma(
+  x = plot_sl$x,
+  shape = updated_sl$params$shape,
+  scale = updated_sl$params$scale)
+
+# Pivot from wide data to long data
+plot_sl <- plot_sl %>% 
+  pivot_longer(cols = -x)
+
+# Plot
+ggplot(plot_sl, aes(x = x, y = value, color = factor(name))) +
+  geom_line(size = 1) +
+  xlab("Step Length (m)") +
+  ylab("Probability Density") +
+  scale_color_manual(name = "Distribution", 
+                     breaks = c("tentative", "updated"),
+                     values = c("blue", "orange")) +
+  theme_bw()
+
+
+
+
+#Testing colinearity between covariates 
+cor(ssf_2543[, c("NDVI_end", "Elevation_end", 
+  "Fcover_end", "Forest_end", "Oceanseas_end","Builtup_end")],use='complete.obs')
+#Forest cover, fcover, and NDVI are all autocorrelated
+#Ended up removing fcover from model 
+```
+Loading and plotting the other datasets 
+```{r}
+#NSD function (I think there is already a function but I wasn't able to make it work)
+nsd_col_func<-function(Dataset,x,y,id){
+  xdist<-{}
+  ydist<-{}
+  nsd<-{}
+  change<-{}
+  attach(Dataset)
+  individual<-id[1]
+  j<-1
+  for (i in 1:(nrow(Dataset))) {
+    if (individual==id[i]){
+      xdist[i]<-abs(x[i]-x[j])
+      ydist[i]<-abs(y[i]-y[j])
+      nsd[i]<-sqrt(xdist[i]^2+ydist[i]^2)
+      change[i]=0
+    }
+    else {
+      j=i
+      individual=id[i]
+      xdist[i]<-abs(x[i]-x[j])
+      ydist[i]<-abs(y[i]-y[j])
+      nsd[i]<-sqrt(xdist[i]^2+ydist[i]^2)
+    }
+    
+  }
+  detach(Dataset)
+  Dataset$NSD<-nsd 
+  return(Dataset)
+}
+
+#Function for selecting only south migrations using the locator function (use thinned dataset or else it will take forever to run)
+#I excluded stop-overs when segmenting
+#Function must be run in console and check display settings are at 100% zoom (will get wrong values if not)
+#No output but will create a migratory_changes variable that you can then assign to a new variable
+segment_func<-function(Dataset){
+  individuals<-unique(Dataset$id)
+  migratory_changes<-data.frame(date=c(),individual=c())
+  for (i in 1:length(individuals)){
+    movement_individual<-Dataset %>% 
+      filter(id==individuals[i])
+    plot(movement_individual$t_,movement_individual$NSD,main=individuals[i],xlim=c(movement_individual$t_[1],movement_individual$t_[nrow(movement_individual)]))
+    clicks<-locator()
+    dates<-as.POSIXct(clicks$x,origin="1970-01-01",tz="UTC")
+    individual<-rep(individuals[i],length(dates))
+    migrations<-data.frame(date=dates)
+    migrations<-cbind(migrations,individual)
+    migratory_changes<-rbind(migratory_changes,migrations)
+  }
+  return(migratory_changes)
+}
+
+#Function for assigning state of migration as a new column in the dataset using the dates determined with segment_func (Use non-thinned dataset for this step as you will need to know the states for the full dataset)
+migration_state_func<-function(Dataset,migratory_changes) {
+  individuals<-unique(Dataset$individual.local.identifier)
+  Dataset$state<-1
+  for (i in 1:length(individuals)) {
+    migratory_changes_individual<-migratory_changes %>% 
+      filter(individual==individuals[i])
+    state<-1
+    for (j in 1:(nrow(migratory_changes_individual)-1)){
+      if (j %% 2 == 1) {
+        Dataset$state[Dataset$individual.local.identifier==individuals[i] & Dataset$timestamp>=migratory_changes_individual[j,1] &  Dataset$timestamp<=migratory_changes_individual[j+1,1]]<-2
+       j<-j+1
+      }
+    }
+  }
+  
+  categories<- c("1"="Other", "2"="South Migration")
+  Dataset$state<-factor(categories[Dataset$state],levels=c("Other","South Migration"))
+  return(Dataset)
+}
+
+##################################################
+###Loading and plotting departures from Bavaria###
+##################################################
+setwd("D:/White Stork Tracking")
+#Run this if you want to resegment the data yourself 
+BVA<-read.csv("LifeTrack White Stork Bavaria_2014-2019-gps.csv")
+BVA$timestamp<-as.POSIXct(BVA$timestamp,format="%Y-%m-%d %H:%M:%OS",tz="UTC")
+BVA<-BVA %>% 
+  filter(!is.na(location.long),!is.na(location.lat))
+
+#Segmenting with NSD 
+#I did my best to only select timespans when they are migrating and to eliminate long stopovers and have provided datasets with states already defined. However, if I did not do this well enough, here is the code to resegment) 
+BVA.daily<-BVA %>% #Getting daily fixes with position during the day 
+  amt::mk_track(.x=location.long,.y=location.lat,.t=timestamp,id=individual.local.identifier,crs="+proj=longlat +datum=WGS84 +no_defs") %>% 
+  time_of_day(include.crepuscule=FALSE) %>% 
+  filter(tod_=="day") %>%  
+  nest(data=-"id") %>% 
+  mutate(data=purrr::map(data,function(x)
+    track_resample(x,rate=hours(24),tolerance=hours(2)))) %>% 
+  unnest(data) 
+
+BVA.daily<-nsd_col_func(BVA.daily,x_,y_,id) #Adding NSD column to daily dataset
+BVA.dates<-segment_func(BVA.daily) #Segmenting with locator function (run this line in console)
+BVA<-nsd_col_func(BVA,location.long,location.lat,individual.local.identifier) #Adding NSD column to full dataset
+BVA<-migration_state_func(BVA,BVA.dates) #Assigning states to initial dataset
+
+#Plotting NSD of every individual with state coloured to make sure segmenting worked 
+individuals<-unique(BVA$individual.local.identifier)
+for (i in 1:length(individuals)){
+  Ind <-BVA %>% 
+    filter(individual.local.identifier==individuals[i])
+  plot(Ind$timestamp,Ind$NSD,main=individuals[i],xlim=c(Ind$timestamp[1],Ind$timestamp[nrow(Ind)]),col=Ind$state,xlab="time",ylab="Net Squared Displacement")
+  legend("topright",legend=unique(BVA$state),col=unique(legend=BVA$state),fill=unique(BVA$state),horiz=T,cex=0.5)
+}
+
+#Saving dataset with state 
+write.csv(BVA,"BVA dataset ready for SSF.csv")
+
+#Run this if you want to use the dataset with states defined 
+BVA<-read.csv("BVA ready for SSF.csv")
+
+#Plotting 
+world_map <- map_data("world")
+ggplot(world_map, aes(x = long, y = lat, group = group)) +
+  geom_polygon(fill="lightgray", colour = "white")+
+  coord_map(xlim=c(-35,50),ylim=c(-30,60))+
+  geom_point(data=BVA,aes(x=location.long,y=location.lat),color="red",inherit.aes=FALSE,alpha=0.3,size=0.1)
+
+
+##################################################
+###Loading and plotting departures from Voralberg###
+##################################################
+setwd("D:/White Stork Tracking")
+#Run this if you want to resegment the data yourself 
+VBG<-read.csv("LifeTrack White Stork Vorarlberg_2016-2019-gps.csv")
+VBG$timestamp<-as.POSIXct(VBG$timestamp,format="%Y-%m-%d %H:%M:%OS",tz="UTC")
+VBG<-VBG %>% 
+  filter(!is.na(location.long),!is.na(location.lat))
+
+#Segmenting with NSD 
+#I did my best to only select timespans when they are migrating and to eliminate long stopovers and have provided datasets with states already defined. However, if I did not do this well enough, here is the code to resegment) 
+VBG.daily<-VBG %>% #Getting daily fixes with position during the day 
+  amt::mk_track(.x=location.long,.y=location.lat,.t=timestamp,id=individual.local.identifier,crs="+proj=longlat +datum=WGS84 +no_defs") %>% 
+  time_of_day(include.crepuscule=FALSE) %>% 
+  filter(tod_=="day")%>%  
+  nest(data=-"id") %>% 
+  mutate(data=purrr::map(data,function(x)
+    track_resample(x,rate=hours(24),tolerance=hours(2)))) %>% 
+  unnest(data) 
+
+VBG.daily<-nsd_col_func(VBG.daily,x_,y_,id) #Adding NSD column to daily dataset
+VBG.dates<-segment_func(VBG.daily) #Segmenting with locator function (run this line in console)
+VBG<-nsd_col_func(VBG,location.long,location.lat,individual.local.identifier) #Adding NSD column to full dataset
+VBG<-migration_state_func(VBG,VBG.dates) #Assigning states to initial dataset
+
+#Plotting NSD of every individual with state coloured to make sure segmenting worked 
+individuals<-unique(VBG$individual.local.identifier)
+for (i in 1:length(individuals)){
+  Ind <-VBG %>% 
+    filter(individual.local.identifier==individuals[i])
+  plot(Ind$timestamp,Ind$NSD,main=individuals[i],xlim=c(Ind$timestamp[1],Ind$timestamp[nrow(Ind)]),col=Ind$state,xlab="time",ylab="Net Squared Displacement")
+  legend("topright",legend=unique(VBG$state),col=unique(legend=VBG$state),fill=unique(VBG$state),horiz=T,cex=0.5)
+}
+
+#Saving dataset with state 
+write.csv(VBG,"VBG dataset ready for SSF.csv")
+
+#Run this if you want to use the dataset with states defined 
+VBG<-read.csv("VBG ready for SSF.csv")
+
+#Plotting 
+world_map <- map_data("world")
+ggplot(world_map, aes(x = long, y = lat, group = group)) +
+  geom_polygon(fill="lightgray", colour = "white")+
+  coord_map(xlim=c(-35,50),ylim=c(-30,60))+
+  geom_point(data=VBG,aes(x=location.long,y=location.lat),color="red",inherit.aes=FALSE,alpha=0.3,size=0.1)
+
+
+##################################################
+##Loading and plotting departures from Rheinland##
+##################################################
+setwd("D:/White Stork Tracking/LifeTrack White Stork Rheinland-Pfalz_2015-2019-gps.csv")
+#Run this if you want to resegment the data yourself 
+RND<-read.csv("LifeTrack White Stork Rheinland-Pfalz_2015-2019-gps.csv")
+RND$timestamp<-as.POSIXct(RND$timestamp,format="%Y-%m-%d %H:%M:%OS",tz="UTC")
+RND<-RND %>% 
+  filter(!is.na(location.long),!is.na(location.lat))
+
+#Segmenting with NSD 
+#I did my best to only select timespans when they are migrating and to eliminate long stopovers and have provided datasets with states already defined. However, if I did not do this well enough, here is the code to resegment) 
+RND.daily<-RND %>% #Getting daily fixes with position during the day 
+  amt::mk_track(.x=location.long,.y=location.lat,.t=timestamp,id=individual.local.identifier,crs="+proj=longlat +datum=WGS84 +no_defs") %>% 
+  time_of_day(include.crepuscule=FALSE) %>% 
+  filter(tod_=="day") %>%  
+  nest(data=-"id") %>% 
+  mutate(data=purrr::map(data,function(x)
+    track_resample(x,rate=hours(24),tolerance=hours(2)))) %>% 
+  unnest(data) 
+
+RND.daily<-nsd_col_func(RND.daily,x_,y_,id) #Adding NSD column to daily dataset
+RND.dates<-segment_func(RND.daily) #Segmenting with locator function (run this line in console)
+RND<-nsd_col_func(RND,location.long,location.lat,individual.local.identifier) #Adding NSD column to full dataset
+RND<-migration_state_func(RND,RND.dates) #Assigning states to initial dataset
+
+#Plotting NSD of every individual with state coloured to make sure segmenting worked 
+individuals<-unique(RND$individual.local.identifier)
+for (i in 1:length(individuals)){
+  Ind <-RND %>% 
+    filter(individual.local.identifier==individuals[i])
+  plot(Ind$timestamp,Ind$NSD,main=individuals[i],xlim=c(Ind$timestamp[1],Ind$timestamp[nrow(Ind)]),col=Ind$state,xlab="time",ylab="Net Squared Displacement")
+  legend("topright",legend=unique(RND$state),col=unique(legend=RND$state),fill=unique(RND$state),horiz=T,cex=0.5)
+}
+
+#Saving dataset with state 
+write.csv(RND,"RND dataset ready for SSF.csv")
+
+#Run this if you want to use the dataset with states defined 
+RND<-read.csv("RND ready for SSF.csv")
+
+#Plotting 
+world_map <- map_data("world")
+ggplot(world_map, aes(x = long, y = lat, group = group)) +
+  geom_polygon(fill="lightgray", colour = "white")+
+  coord_map(xlim=c(-35,50),ylim=c(-30,60))+
+  geom_point(data=RND,aes(x=location.long,y=location.lat),color="red",inherit.aes=FALSE,alpha=0.3,size=0.1)
+
+############################################################
+##Loading and plotting departures from  South West Germany##
+############################################################
+setwd("D:/White Stork Tracking/LifeTrack White Stork SW Germany_2013-2019-gps.csv")
+#Run this if you want to resegment the data yourself 
+SWG<-read.csv("LifeTrack White Stork SW Germany_2013-2019-gps.csv")
+SWG$timestamp<-as.POSIXct(SWG$timestamp,format="%Y-%m-%d %H:%M:%OS",tz="UTC")
+SWG<-SWG %>% 
+  filter(!is.na(location.long),!is.na(location.lat))
+
+#Segmenting with NSD 
+#I did my best to only select timespans when they are migrating and to eliminate long stopovers and have provided datasets with states already defined. However, if I did not do this well enough, here is the code to resegment) 
+SWG.daily<-SWG %>% #Getting daily fixes with position during the day 
+  amt::mk_track(.x=location.long,.y=location.lat,.t=timestamp,id=individual.local.identifier,crs="+proj=longlat +datum=WGS84 +no_defs") %>% 
+  time_of_day(include.crepuscule=FALSE) %>% 
+  filter(tod_=="day") %>%  
+  nest(data=-"id") %>% 
+  mutate(data=purrr::map(data,function(x)
+    track_resample(x,rate=hours(24),tolerance=hours(2)))) %>% 
+  unnest(data) 
+
+SWG.daily<-nsd_col_func(SWG.daily,x_,y_,id) #Adding NSD column to daily dataset
+SWG.dates<-segment_func(SWG.daily) #Segmenting with locator function (run this line in console)
+SWG<-nsd_col_func(SWG,location.long,location.lat,individual.local.identifier) #Adding NSD column to full dataset
+SWG<-migration_state_func(SWG,SWG.dates) #Assigning states to initial dataset
+
+#Plotting NSD of every individual with state coloured to make sure segmenting worked 
+individuals<-unique(SWG$individual.local.identifier)
+for (i in 1:length(individuals)){
+  Ind <-SWG %>% 
+    filter(individual.local.identifier==individuals[i])
+  plot(Ind$timestamp,Ind$NSD,main=individuals[i],xlim=c(Ind$timestamp[1],Ind$timestamp[nrow(Ind)]),col=Ind$state,xlab="time",ylab="Net Squared Displacement")
+  legend("topright",legend=unique(SWG$state),col=unique(legend=SWG$state),fill=unique(SWG$state),horiz=T,cex=0.5)
+}
+
+#Saving dataset with state 
+write.csv(SWG,"SWG dataset ready for SSF.csv")
+
+#Run this if you want to use the dataset with states defined 
+SWG<-read.csv("SWG ready for SSF.csv")
+
+#Plotting 
+world_map <- map_data("world")
+ggplot(world_map, aes(x = long, y = lat, group = group)) +
+  geom_polygon(fill="lightgray", colour = "white")+
+  coord_map(xlim=c(-35,50),ylim=c(-30,60))+
+  geom_point(data=SWG,aes(x=location.long,y=location.lat),color="red",inherit.aes=FALSE,alpha=0.3,size=0.1)
+
+
+
+```
+Creating dataset with dates for segmentation for every individual (Departures from Oberschwaben)
+```{r}
+library(ggplot2)
+library(terra)
+library(lubridate)
+library(tidyverse)
+library(amt)
+library(parallel)
+library(purrr)
+#Individuals from Oberschwaben 
+OSN<-read.csv("LifeTrack White Stork Oberschwaben_2014-2019-gps.csv",as.is=T)
+OSN$timestamp<-as.POSIXct(OSN$timestamp,format="%Y-%m-%d %H:%M:%S",tz="UTC")
+OSN<-OSN %>% 
+  filter(!is.na(location.long),!is.na(location.lat))
+OSN.all<-OSN %>% nest(data=-individual.local.identifier)
+
+#Resampling to one fix per day to segment with NSD faster 
+OSN.track<-OSN.all%>% 
+  mutate(track=purrr::map(data,function(x)
+    mk_track(x,location.long,location.lat,timestamp,crs=4326)))
+
+OSN.track<-OSN.track %>% mutate(resampled=map(track,function(x) 
+    track_resample(x,hours(24),tolerance=hours(4))))
+
+OSN.daily<-OSN.track[,-c(2,3)]
+OSN.daily<-unnest(OSN.daily,cols=c(resampled))
+
+#Adding NSD column 
+xdist={}
+ydist={}
+nsd={}
+change={}
+attach(OSN.daily)
+individual<-individual.local.identifier[1]
+j=1
+for (i in 1:(nrow(OSN.daily))) {
+  if (individual==individual.local.identifier[i]){
+    xdist[i]<-abs(x_[i]-x_[j])
+    ydist[i]<-abs(y_[i]-y_[j])
+    nsd[i]<-sqrt(xdist[i]^2+ydist[i]^2)
+    change[i]=0
+  }
+  else {
+    j=i
+    individual=individual.local.identifier[i]
+    xdist[i]<-abs(x_[i]-x_[j])
+    ydist[i]<-abs(y_[i]-y_[j])
+    nsd[i]<-sqrt(xdist[i]^2+ydist[i]^2)
+  }
+}
+detach(OSN.daily)
+OSN.daily$NSD<-nsd
+
+#Segmenting using NSD (the first loop with locator function needs to be run in the console and check that zoom is at 100% on display settings or you will get wrong values)
+individuals<-unique(OSN$individual.local.identifier)
+migratory_changes<-data.frame(date=c(),individual=c())
+for (i in 1:length(individuals)){
+  movement_individual<-OSN.daily %>% 
+    filter(individual.local.identifier==individuals[i])
+  plot(movement_individual$t_,movement_individual$NSD,main=individuals[i],xlim=c(movement_individual$t_[1],movement_individual$t_[nrow(movement_individual)]),ylim=c(0,25),type="l")
+  clicks<-locator()
+  dates<-as.POSIXct(clicks$x,origin="1970-01-01",tz="UTC")
+  individual<-rep(individuals[i],length(dates))
+  migrations<-data.frame(date=dates)
+  migrations<-cbind(migrations,individual)
+  migratory_changes<-rbind(migratory_changes,migrations)
+}
+
+
+#Saving migratory dates 
+write.csv(migratory_changes,file="OSN dates for changes in migratory state.csv")
+migratory_changes<-read.csv(file="OSN dates for changes in migratory state.csv")
+migratory_changes<-migratory_changes[,-1]
+
+#Assigning categories for autumn migration or other (on non-thinned dataset)
+OSN$state<-1
+for (i in 1:length(individuals)) {
+  migratory_changes_individual<-migratory_changes %>% 
+    filter(individual==individuals[i])
+  for (j in 1:(nrow(migratory_changes_individual)-1)){
+    if (j %% 2 == 1) {
+      OSN$state[OSN$individual.local.identifier==individuals[i] & OSN$timestamp>=migratory_changes_individual[j,1] &  OSN$timestamp<=migratory_changes_individual[j+1,1]]<-2
+      j<-j+1
+    }
+  }
+}
+
+categories<- c("1"="Other", "2"="South Migration")
+OSN$state<-factor(categories[OSN$state],levels=c("Other","South Migration"))
+
+#Saving OSN dataset 
+write.csv(OSN,"OSN dataset ready for SSF.csv")
+
+for (i in 1:length(individuals)){
+  daily.individual <-OSN %>% 
+    filter(individual.local.identifier==individuals[i])
+  plot(daily.individual$timestamp,daily.individual$NSD,main=individuals[i],xlim=c(daily.individual$t_[1],daily.individual$t_[nrow(daily.individual)]),ylim=c(0,25),col=daily.individual$state,xlab="time",ylab="Net Squared Displacement")
+  legend("topright",legend=unique(OSN$state),col=unique(legend=OSN$state),fill=unique(OSN$state),horiz=T,cex=0.5)
+}
+
+
+```
+
+Running SSF for all individuals 
+```{r}
+library(MASS) #package for plotting distributions 
+library(circular) #package for circular distributions 
+library(ggplot2)
+library(terra)
+library(lubridate)
+library(tidyverse)
+library(amt)
+library(parallel)
+library(purrr)
+
+#Loading environmental variables 
+Environment<-terra::rast("Environmental variables.tif")
+
+##################################################
+######Model for departures from Oberschwaben######
+##################################################
+#Loading OSN dataset with state and ready for SSF
+OSN<-read.csv("OSN dataset ready for SSF.csv",as.is=T)
+OSN$timestamp<-as.POSIXct(OSN$timestamp,format="%Y-%m-%d %H:%M:%OS",tz="UTC")
+OSN.filtered<-OSN %>% 
+  filter(state=="South Migration")
+OSN.filtered.nest<-OSN.filtered%>% nest(data=-individual.local.identifier)
+#Explanations for each step of how to run an SSF are in a previous code chunk (I am just mapping the functions to each indivdual)
+OSN.model<-OSN.filtered.nest%>% 
+  mutate(track=purrr::map(data,function(x)
+    mk_track(x,location.long,location.lat,timestamp,crs=4326))) %>% 
+  mutate(resampled=purrr::map(track,function(x)
+    time_of_day(x,include.crepuscule=FALSE))) %>% 
+  mutate(resampled=purrr::map(resampled,function(x)
+    filter(x,tod_=="day"))) %>% 
+  mutate(resampled=purrr::map(resampled,function(x)
+    amt::track_resample(x,rate=hours(1),tolerance=minutes(15)))) %>% 
+  mutate(steps=purrr::map(resampled,function(x)
+    filter_min_n_burst(x,3))) %>% 
+  mutate(steps=purrr::map(steps,function(x)
+    steps_by_burst(x))) %>% 
+  mutate(steps=purrr::map(steps,function(x)
+    random_steps(x,n=15))) %>% 
+  mutate(steps=purrr::map(steps,function(x)
+    mutate(x,log_sl_=log(sl_)))) %>% 
+  mutate(steps=purrr::map(steps,function(x)
+    extract_covariates(x,Environment, where="both"))) %>% 
+  mutate(model=purrr::map(steps,function(x)
+    fit_issf(x, case_ ~ ta_ + cos(ta_) + sl_ + log_sl_ + NDVI_end + Elevation_end + Forest_end + Oceanseas_end + Builtup_end + strata(step_id_),model=TRUE))) %>% 
+  mutate(summary=purrr::map(model,function(x)
+    summary(x)))
+
+
+#Plotting step lengths and turning angles with distributions for every individual to make sure distributions fit 
+for (i in 1:(nrow(OSN.model))) { #Step length
+  Ind<-OSN.model$individual.local.identifier[[i]]
+  Data<-OSN.model$steps[[i]]
+  Data <- Data %>% 
+    filter(case_=TRUE)
+  fgamma <- amt::fit_distr(Data$sl_, "gamma")
+  par(mfrow = c(1, 1))
+  hist(Data$sl_, breaks = 50, prob = TRUE, xlab = "Step length (m)", main = Ind)
+  plot(function(x) dgamma(x, shape = fgamma$params$shape,scale = fgamma$params$scale), add = TRUE, from = 0.0002, to = 2, col = "blue")
+  legend("topright", col = "blue", lty = 1, legend = "gamma", bty = "n")
+}
+
+for (i in 1:(nrow(OSN.model))) { #Turning angle 
+  Ind<-OSN.model$individual.local.identifier[[i]]
+  Data<-OSN.model$steps[[i]]
+  Data <- Data %>% 
+    filter(case_=TRUE)
+fvmises <- amt::fit_distr(Data$ta_, "vonmises")
+par(mfrow = c(1, 1))
+hist(Data$ta_, breaks = 50, prob = TRUE, 
+     xlim = c(-pi, pi),
+     xlab = "Turning angles (rad)", main=Ind)
+plot(function(x) dvonmises(x, mu = 0, kappa = fvmises$params$kappa), add = TRUE, from = -pi, to = pi, col = "red")
+}
+
+##################################################
+########Model for departures from Bavaria#########
+##################################################
+#Problem with exponential fit 
+#Loading BVA dataset with state and ready for SSF
+BVA<-read.csv("BVA dataset ready for SSF.csv",as.is=T)
+BVA$timestamp<-as.POSIXct(BVA$timestamp,format="%Y-%m-%d %H:%M:%OS",tz="UTC")
+BVA.filtered<-BVA %>% 
+  filter(state=="South Migration")
+BVA.filtered.nest<-BVA.filtered%>% nest(data=-individual.local.identifier)
+BVA.filtered.nest<-BVA.filtered.nest[-13,] #Removing individuals that are blocking the program
+BVA.filtered.nest<-BVA.filtered.nest[-13,]
+BVA.filtered.nest<-BVA.filtered.nest[-20,]
+#Explanations for each step of how to run an SSF are in a previous code chunk (I am just mapping the functions to each indivdual)
+BVA.model<-BVA.filtered.nest%>% 
+  mutate(track=purrr::map(data,function(x)
+    mk_track(x,location.long,location.lat,timestamp,crs=4326)))  %>% 
+  mutate(resampled=purrr::map(track,function(x)
+    time_of_day(x,include.crepuscule=FALSE))) %>% 
+  mutate(resampled=purrr::map(resampled,function(x)
+    filter(x,tod_=="day"))) %>% 
+  mutate(resampled=purrr::map(resampled,function(x)
+    amt::track_resample(x,rate=hours(1),tolerance=minutes(15)))) %>% 
+  mutate(steps=purrr::map(resampled,function(x)
+    filter_min_n_burst(x,3))) %>% 
+  mutate(steps=purrr::map(steps,function(x)
+    steps_by_burst(x))) %>% 
+  mutate(steps=purrr::map(steps,function(x)
+    random_steps(x,n=15))) %>% 
+  mutate(steps=purrr::map(steps,function(x)
+    mutate(x,log_sl_=log(sl_)))) %>% 
+  mutate(steps=purrr::map(steps,function(x)
+    extract_covariates(x,Environment, where="both"))) %>% 
+  mutate(model=purrr::map(steps,function(x)
+    fit_issf(x, case_ ~ ta_ + cos(ta_) + sl_ + log_sl_ + NDVI_end + Elevation_end + Forest_end + Oceanseas_end + Builtup_end + strata(step_id_),model=TRUE))) %>% 
+  mutate(summary=purrr::map(model,function(x)
+    summary(x)))
+
+
+#Plotting step lengths and turning angles with distributions for every individual to make sure distributions fit 
+for (i in 1:(nrow(BVA.model))) { #Step length
+  Ind<-BVA.model$individual.local.identifier[[i]]
+  Data<-BVA.model$steps[[i]]
+  Data <- Data %>% 
+    filter(case_==TRUE)
+  fgamma <- amt::fit_distr(Data$sl_, "gamma")
+  par(mfrow = c(1, 1))
+  hist(Data$sl_, breaks = 50, prob = TRUE, xlab = "Step length (m)", main = Ind)
+  plot(function(x) dgamma(x, shape = fgamma$params$shape,scale = fgamma$params$scale), add = TRUE, from = 0.0002, to = 2, col = "blue")
+  legend("topright", col = "blue", lty = 1, legend = "gamma", bty = "n")
+}
+
+for (i in 1:(nrow(BVA.model))) { #Turning angle 
+  Ind<-OSN.model$individual.local.identifier[[i]]
+  Data<-OSN.model$steps[[i]]
+  Data <- Data %>% 
+    filter(case_==TRUE)
+fvmises <- amt::fit_distr(Data$ta_, "vonmises")
+par(mfrow = c(1, 1))
+hist(Data$ta_, breaks = 50, prob = TRUE, 
+     xlim = c(-pi, pi),
+     xlab = "Turning angles (rad)", main=Ind)
+plot(function(x) dvonmises(x, mu = 0, kappa = fvmises$params$kappa), add = TRUE, from = -pi, to = pi, col = "red")
+}
+
+
+
+##################################################
+#######Model for departures from Voralberg########
+##################################################
+#Loading VBG dataset with state and ready for SSF
+VBG<-read.csv("VBG dataset ready for SSF.csv",as.is=T)
+VBG$timestamp<-as.POSIXct(VBG$timestamp,format="%Y-%m-%d %H:%M:%OS",tz="UTC")
+VBG.filtered<-VBG %>% 
+  filter(state=="South Migration")
+VBG.filtered.nest<-VBG.filtered%>% nest(data=-individual.local.identifier)
+#Explanations for each step of how to run an SSF are in a previous code chunk (I am just mapping the functions to each indivdual)
+VBG.model<-VBG.filtered.nest%>% 
+  mutate(track=purrr::map(data,function(x)
+    mk_track(x,location.long,location.lat,timestamp,crs=4326))) %>% 
+  mutate(resampled=purrr::map(track,function(x)
+    time_of_day(x,include.crepuscule=FALSE))) %>% 
+  mutate(resampled=purrr::map(resampled,function(x)
+    filter(x,tod_=="day"))) %>% 
+  mutate(resampled=purrr::map(resampled,function(x)
+    amt::track_resample(x,rate=hours(1),tolerance=minutes(15)))) %>% 
+  mutate(steps=purrr::map(resampled,function(x)
+    filter_min_n_burst(x,3))) %>% 
+  mutate(steps=purrr::map(steps,function(x)
+    steps_by_burst(x))) %>% 
+  mutate(steps=purrr::map(steps,function(x)
+    random_steps(x,n=15))) %>% 
+  mutate(steps=purrr::map(steps,function(x)
+    mutate(x,log_sl_=log(sl_)))) %>% 
+  mutate(steps=purrr::map(steps,function(x)
+    extract_covariates(x,Environment, where="both"))) %>% 
+  mutate(model=purrr::map(steps,function(x)
+    fit_issf(x, case_ ~ ta_ + cos(ta_) + sl_ + log_sl_ + NDVI_end + Elevation_end + Forest_end + Oceanseas_end + Builtup_end + strata(step_id_),model=TRUE))) %>% 
+  mutate(summary=purrr::map(model,function(x)
+    summary(x)))
+
+
+#Plotting step lengths and turning angles with distributions for every individual to make sure distributions fit 
+for (i in 1:(nrow(VBG.model))) { #Step length
+  Ind<-VBG.model$individual.local.identifier[[i]]
+  Data<-VBG.model$steps[[i]]
+  Data <- Data %>% 
+    filter(case_=TRUE)
+  fgamma <- amt::fit_distr(Data$sl_, "gamma")
+  par(mfrow = c(1, 1))
+  hist(Data$sl_, breaks = 50, prob = TRUE, xlab = "Step length (m)", main = Ind)
+  plot(function(x) dgamma(x, shape = fgamma$params$shape,scale = fgamma$params$scale), add = TRUE, from = 0.0002, to = 2, col = "blue")
+  legend("topright", col = "blue", lty = 1, legend = "gamma", bty = "n")
+}
+
+for (i in 1:(nrow(VBG.model))) { #Turning angle 
+  Ind<-VBG.model$individual.local.identifier[[i]]
+  Data<-VBG.model$steps[[i]]
+  Data <- Data %>% 
+    filter(case_=TRUE)
+fvmises <- amt::fit_distr(Data$ta_, "vonmises")
+par(mfrow = c(1, 1))
+hist(Data$ta_, breaks = 50, prob = TRUE, 
+     xlim = c(-pi, pi),
+     xlab = "Turning angles (rad)", main=Ind)
+plot(function(x) dvonmises(x, mu = 0, kappa = fvmises$params$kappa), add = TRUE, from = -pi, to = pi, col = "red")
+}
+
+##################################################
+#######Model for departures from Rheinland########
+##################################################
+#Loading RND dataset with state and ready for SSF
+RND<-read.csv("RND dataset ready for SSF.csv",as.is=T)
+RND$timestamp<-as.POSIXct(RND$timestamp,format="%Y-%m-%d %H:%M:%OS",tz="UTC")
+RND.filtered<-RND %>% 
+  filter(state=="South Migration")
+RND.filtered.nest<-RND.filtered%>% nest(data=-individual.local.identifier)
+RND.filtered.nest<-RND.filtered.nest[-45,] #45th individual was blocking code 
+#Explanations for each step of how to run an SSF are in a previous code chunk (I am just mapping the functions to each indivdual)
+RND.model<-RND.filtered.nest%>% 
+  mutate(track=purrr::map(data,function(x)
+    mk_track(x,location.long,location.lat,timestamp,crs=4326))) %>% 
+  mutate(resampled=purrr::map(track,function(x)
+    time_of_day(x,include.crepuscule=FALSE))) %>% 
+  mutate(resampled=purrr::map(resampled,function(x)
+    filter(x,tod_=="day"))) %>% 
+  mutate(resampled=purrr::map(resampled,function(x)
+    amt::track_resample(x,rate=hours(1),tolerance=minutes(15)))) %>% 
+  mutate(steps=purrr::map(resampled,function(x)
+    filter_min_n_burst(x,3))) %>% 
+  mutate(steps=purrr::map(steps,function(x)
+    steps_by_burst(x))) %>% 
+  mutate(steps=purrr::map(steps,function(x)
+    random_steps(x,n=15))) %>% 
+  mutate(steps=purrr::map(steps,function(x)
+    mutate(x,log_sl_=log(sl_)))) %>% 
+  mutate(steps=purrr::map(steps,function(x)
+    extract_covariates(x,Environment, where="both"))) %>% 
+  mutate(model=purrr::map(steps,function(x)
+    fit_issf(x, case_ ~ ta_ + cos(ta_) + sl_ + log_sl_ + NDVI_end + Elevation_end + Forest_end + Oceanseas_end + Builtup_end + strata(step_id_),model=TRUE))) %>% 
+  mutate(summary=purrr::map(model,function(x)
+    summary(x)))
+
+
+#Plotting step lengths and turning angles with distributions for every individual to make sure distributions fit 
+for (i in 1:(nrow(RND.model))) { #Step length
+  Ind<-RND.model$individual.local.identifier[[i]]
+  Data<-RND.model$steps[[i]]
+  Data <- Data %>% 
+    filter(case_=TRUE)
+  fgamma <- amt::fit_distr(Data$sl_, "gamma")
+  par(mfrow = c(1, 1))
+  hist(Data$sl_, breaks = 50, prob = TRUE, xlab = "Step length (m)", main = Ind)
+  plot(function(x) dgamma(x, shape = fgamma$params$shape,scale = fgamma$params$scale), add = TRUE, from = 0.0002, to = 2, col = "blue")
+  legend("topright", col = "blue", lty = 1, legend = "gamma", bty = "n")
+}
+
+for (i in 1:(nrow(RND.model))) { #Turning angle 
+  Ind<-RND.model$individual.local.identifier[[i]]
+  Data<-RND.model$steps[[i]]
+  Data <- Data %>% 
+    filter(case_=TRUE)
+fvmises <- amt::fit_distr(Data$ta_, "vonmises")
+par(mfrow = c(1, 1))
+hist(Data$ta_, breaks = 50, prob = TRUE, 
+     xlim = c(-pi, pi),
+     xlab = "Turning angles (rad)", main=Ind)
+plot(function(x) dvonmises(x, mu = 0, kappa = fvmises$params$kappa), add = TRUE, from = -pi, to = pi, col = "red")
+}
+
+##################################################
+#######Model for departures from SW Germany#######
+##################################################
+#Loading SWG dataset with state and ready for SSF
+SWG<-read.csv("SWG dataset ready for SSF.csv",as.is=T)
+SWG$timestamp<-as.POSIXct(SWG$timestamp,format="%Y-%m-%d %H:%M:%OS",tz="UTC")
+SWG.filtered<-SWG %>% 
+  filter(state=="South Migration")
+SWG.filtered.nest<-SWG.filtered%>% nest(data=-individual.local.identifier)
+#Explanations for each step of how to run an SSF are in a previous code chunk (I am just mapping the functions to each indivdual)
+SWG.model<-SWG.filtered.nest %>% 
+  mutate(track=purrr::map(data,function(x)
+    mk_track(x,location.long,location.lat,timestamp,crs=4326))) %>% 
+  mutate(resampled=purrr::map(track,function(x)
+    time_of_day(x,include.crepuscule=FALSE))) %>% 
+  mutate(resampled=purrr::map(resampled,function(x)
+    filter(x,tod_=="day"))) %>% 
+  mutate(resampled=purrr::map(resampled,function(x)
+    amt::track_resample(x,rate=hours(1),tolerance=minutes(15)))) %>% 
+  mutate(steps=purrr::map(resampled,function(x)
+    filter_min_n_burst(x,3))) %>% 
+  mutate(steps=purrr::map(steps,function(x)
+    steps_by_burst(x))) %>% 
+  mutate(steps=purrr::map(steps,function(x)
+    random_steps(x,n=15))) %>% 
+  mutate(steps=purrr::map(steps,function(x)
+    mutate(x,log_sl_=log(sl_)))) %>% 
+  mutate(steps=purrr::map(steps,function(x)
+    extract_covariates(x,Environment, where="both"))) %>% 
+  mutate(model=purrr::map(steps,function(x)
+    fit_issf(x, case_ ~ ta_ + cos(ta_) + sl_ + log_sl_ + NDVI_end + Elevation_end + Forest_end + Oceanseas_end + Builtup_end + strata(step_id_),model=TRUE))) %>% 
+  mutate(summary=purrr::map(model,function(x)
+    summary(x)))
+
+
+#Plotting step lengths and turning angles with distributions for every individual to make sure distributions fit 
+for (i in 1:(nrow(SWG.model))) { #Step length
+  Ind<-SWG.model$individual.local.identifier[[i]]
+  Data<-SWG.model$steps[[i]]
+  Data <- Data %>% 
+    filter(case_=TRUE)
+  fgamma <- amt::fit_distr(Data$sl_, "gamma")
+  par(mfrow = c(1, 1))
+  hist(Data$sl_, breaks = 50, prob = TRUE, xlab = "Step length (m)", main = Ind)
+  plot(function(x) dgamma(x, shape = fgamma$params$shape,scale = fgamma$params$scale), add = TRUE, from = 0.0002, to = 2, col = "blue")
+  legend("topright", col = "blue", lty = 1, legend = "gamma", bty = "n")
+}
+
+for (i in 1:(nrow(SWG.model))) { #Turning angle 
+  Ind<-SWG.model$individual.local.identifier[[i]]
+  Data<-SWG.model$steps[[i]]
+  Data <- Data %>% 
+    filter(case_=TRUE)
+fvmises <- amt::fit_distr(Data$ta_, "vonmises")
+par(mfrow = c(1, 1))
+hist(Data$ta_, breaks = 50, prob = TRUE, 
+     xlim = c(-pi, pi),
+     xlab = "Turning angles (rad)", main=Ind)
+plot(function(x) dvonmises(x, mu = 0, kappa = fvmises$params$kappa), add = TRUE, from = -pi, to = pi, col = "red")
+}
+
+
+```
+
+
