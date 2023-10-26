@@ -1,0 +1,2 @@
+#Code to run Step Selection functions using the amt package in R on the summer migrations of the dataset of 169 gps-tracked white storks from 2014-2019.
+#Model will be used by Dr. Somveille's research group in CBER at UCL to test whether white storks follow optimal connectivity when migrating. 
